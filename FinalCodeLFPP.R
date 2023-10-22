@@ -1,37 +1,38 @@
 # R code for 'When marriage become unattainable: a cohort analysis --------
 
-setwd("C:/Users/hanna/OneDrive/Finals/Diss/R")
+setwd()
 
-
+library(lubridate)
+library(ggpubr)
 library(gtsummary)
 library(webshot)
 library(haven)
 library(gt)
 library(tidyverse)
+library(LexisPlotR)
+library(pBrackets)
 
-#load Socio Dem Surveillance 2019 release dataset
-base <-read_dta('AHRI.dta')
-load('base') #SocioDem dataset
-load('pregSEM') #Pregnancies 2019 dataset
-load('wgh') #Women's General Health dataset
+base <- read_dta('AHRI.dta')
+DataPreg <- read_dta('pregnancy.dta')
+DataWGH <- read_dta('wgh.dta')
+load('DataDem') #load Socio Dem Surveillance 2019 release dataset
+load('DataPreg') #Pregnancies 2019 release dataset
+load('DataWGH') #Women's General Health 2019 release dataset
 
 # Figure 1 ----------------------------------------------------------------
 # Lexis diagram displaying the cohorts used in analysis and the period over 
 # which data is collected in the AHRI HDSS
 
-library('LexisPlotR')
-library('pBrackets')
+
+LexisGrid <- lexis_grid(year_start = 1945, year_end = 2020, age_start = 0, age_end = 75, d=10, lwd=0.5)
+LexisGridFill <- lexis_year(lg = LexisGrid, delta = 19, year = 2000, alpha = 0.7, fill = "grey55")
+
+LexisGridFill <- lexis_cohort(lg = LexisGridFill, cohort = 1945, delta = 20, alpha = .7, fill = "#54438E")
+LexisGridFill <- lexis_cohort(lg = LexisGridFill, cohort = 1965, delta = 20, alpha = .7, fill = '#587DBA')
+LexisGridFill <- lexis_cohort(lg = LexisGridFill, cohort = 1985, delta = 10, alpha = .7, fill = "#20934A")
 
 
-lexisGrid <- lexis_grid(year_start = 1945, year_end = 2020, age_start = 0, age_end = 75, d=10, lwd=0.5)
-lexisGridFill <- lexis_year(lg = lexisGrid, delta = 19, year = 2000, alpha = 0.7, fill = "grey55")
-
-lexisGridFill <- lexis_cohort(lg = lexisGridFill, cohort = 1945, delta = 20, alpha = .7, fill = "#54438E")
-lexisGridFill <- lexis_cohort(lg = lexisGridFill, cohort = 1965, delta = 20, alpha = .7, fill = '#587DBA')
-lexisGridFill <- lexis_cohort(lg = lexisGridFill, cohort = 1985, delta = 10, alpha = .7, fill = "#20934A")
-
-
-lexisGridFill + 
+Figure1 <- LexisGridFill + 
   labs(y="Age", x="Year") + 
   theme(axis.title.x = element_text(margin = margin(t = 25), size = 25, 
                                     colour = grey(level = 0.4), hjust = 0.1),
@@ -49,53 +50,81 @@ lexisGridFill +
 
 
 
-# Table 1 ----------------------------------------------------------------
-
-
-
-tbl1_base <- base %>%
-  #restrict dataset to selected cohorts
-  filter(DoB < '1995-01-01' & DoB >'1945-01-01')%>%
-  #create highest education and Generation variable
+# CREATE BASE DEMOGRPAHIC DATASET USED FOR MOST ANALYSES -----------------
+DataDem <- base
+DataDemMEG <- DataDem %>% #(Demographic dataset with evermarriage, education and generation variables)
   group_by(IndividualId)%>%
-  fill(MaritalStatus, direciton = 'updown')%>%
-  #select only those with at least 1 obs of marital status and education
-  filter(!is.na(MaritalStatus))%>%
-  mutate(EduMax = max(Education, na.rm = T))%>%
+  mutate(AgeAtMarObs = decimal_date(StartDate) - decimal_date(DoB))%>%
   ungroup()%>%
-  mutate(Edugroupmax = 
-           ifelse(EduMax < 8, 'Primary or less',
-                  ifelse(EduMax >=8 & EduMax < 12, 'Some secondary', 
-                         ifelse(EduMax == 12, 'Matric', 'Some tertiary')))) %>%
+  #create calendar year variable
+  separate(StartDate, into = 'Year', remove = F, sep = '-')
+
+DataDemMEG1 <- DataDemMEG %>%
+  #add ever married variable
+  filter(!is.na(MaritalStatus))%>% 
+  mutate(WasMarried = ifelse(grepl('2|3|4', MaritalStatus), '1', '0'))%>%
+  group_by(IndividualId)%>%
+  mutate(EverMarried = max(WasMarried))
+
+
+DataDemMEG2 <- DataDemMEG1 %>%
+  #make maximum age at marital observation variable
+  group_by(IndividualId)%>%
+  mutate(MaxAgeAtMarObs = max(AgeAtMarObs, na.rm=T))%>%
+  #make maximum education variable and track date of obs
+  mutate(EduMax = max(Education, na.rm = T))%>%
+  slice_max(EducationObsDate, with_ties = F)%>%
+  ungroup()%>%
+  transform(Year = as.numeric(Year))%>%
+  mutate(Age = decimal_date(StartDate) - decimal_date(DoB),
+         AgeAtEduObs = decimal_date(EducationObsDate) - decimal_date(DoB))
+
+
+
+DataDemMEG3 <- DataDemMEG2 %>%
+  #label and group education variable
+  ungroup()%>%
+  mutate(EduMaxLbl = 
+           ifelse(EduMax < 8, 'Primary\nor less',
+                  ifelse(EduMax >=8 & EduMax < 12, 'Some \nsecondary', 
+                         ifelse(EduMax == 12, 'Matric', 'Some \ntertiary')))) %>%
+  #make and label generation variable
   mutate( Generation= 
             ifelse (DoB > '1945-01-01' & DoB < '1965-01-01', 'Gen1', 
                     ifelse (DoB >= '1965-01-01' & DoB < '1985-01-01','Gen2',
                             ifelse(DoB > '1985-01-01' & DoB < '1995-01-01','Gen3', 'Other'))))%>%
-  mutate(Edugroupmax = factor(Edugroupmax, 
-                              levels = c('Primary or less', 'Some secondary', 'Matric', 'Some tertiary'),
-                              ordered = T))%>%
-  filter(Generation != 'Other')%>%
-  #Label each observation with Year of obs
-  separate(StartDate, into = 'Year', sep = '-', remove = F)
+  filter(Generation != 'Other')
 
-tbl1_Female <- tbl1_base %>%
+#filter for adequate age at observation, justified in appendix
+DataDemMEG4 <-DataDemMEG3 %>%
+  ungroup()%>%
+  filter(AgeAtEduObs >= 20,
+         MaxAgeAtMarObs >=23 | EverMarried == 1)
+
+save(DataDemMEG4, file = 'DataDemMEG4')
+
+
+# Table 1 -----------------------------------------------------------------
+DataDemMEG <- DataDemMEG4
+
+tbl1_Female <- DataDemMEG %>%
   group_by(IndividualId)%>%
   slice(1)%>%
   ungroup()%>%
-  select(Sex, Generation, Edugroupmax)%>%
+  select(Sex, Generation, EduMaxLbl)%>%
   mutate(Sex = unclass(Sex))%>%
   ungroup()
 
-tbl1_FHHH <- tbl1_base %>%
+tbl1_FHHH <- DataDemMEG %>%
   filter(HHRelation == 1)%>%
   group_by(HouseholdId, IndividualId)%>%
   slice(1)%>%
   ungroup()%>%
-  mutate(FHHH = ifelse(Sex == 2, 'Female-headed HHs', '0'))%>%
+  mutate(FHHH = ifelse(Sex == 2, 'Female-headed households', '0'))%>%
   select(FHHH)
 
 
-tbl1_Employ <-   tbl1_base %>%
+tbl1_Employ <-   DataDemMEG %>%
   filter(HHRelation == 1)%>%
   filter(!is.na(CurrentlyEmployed), CurrentlyEmployed !=0)%>%
   group_by(HouseholdId, Year)%>%
@@ -108,7 +137,7 @@ tbl1_Employ <-   tbl1_base %>%
   select(CurrentlyEmployed)
 
 
-tbl1_Nonresident <- tbl1_base %>%
+tbl1_Nonresident <- DataDemMEG %>%
   group_by(IndividualId, Year)%>%
   slice_max(NonResident, with_ties = F)%>%
   ungroup()%>%
@@ -116,13 +145,11 @@ tbl1_Nonresident <- tbl1_base %>%
   mutate( NonResident = unclass(NonResident))
 
 
-
-
 tbl1_row1 <- tbl_summary( tbl1_Female,
                           by = Generation,
                           value = list(Sex ~ '2'),
                           label  = list(Sex ~ 'Female',
-                                        Edugroupmax ~ "Highest level of education achieved"),
+                                        EduMaxLbl ~ "Highest level of education achieved"),
                           statistic = list(
                             all_categorical() ~ "{p}% ({n})"))%>%
   add_overall()%>%
@@ -132,15 +159,15 @@ tbl1_row1 <- tbl_summary( tbl1_Female,
     c(stat_1, stat_2, stat_3) ~ 
       "**Generation**")%>%
   modify_header(
-    stat_1 = "   **1945-65**,    N = 22,720",
-    stat_2 = "   **1965-85**,    N = 56,971",
-    stat_3 = "   **1985-95**,    N = 45,216",
-    stat_0 = "   **Overall**,   N = 124,907",
+    stat_1 = "   **1945-64**,    N = 20,108",
+    stat_2 = "   **1965-84**,    N = 47,709",
+    stat_3 = "   **1985-94**,    N = 31,873",
+    stat_0 = "   **Overall**,   N = 99,690",
     label = '')
 
 tbl1_row2 <- tbl_summary(tbl1_FHHH,
-                         value = list(FHHH ~ 'Female-headed HHs'),
-                         label = list(FHHH ~ 'Female-headed HHs'),
+                         value = list(FHHH ~ 'Female-headed households'),
+                         label = list(FHHH ~ 'Female-headed households'),
                          statistic = FHHH ~ "{p}% ({n})")%>%
   bold_labels() 
 
@@ -159,89 +186,47 @@ tbl1_row4 <- tbl_summary(tbl1_Employ,
 
 
 #Table 1 
-tbl1_stack_summary <- tbl_stack(list(tbl1_row1, tbl1_row2, tbl1_row3, tbl1_row4))%>%
+Table1 <- tbl_stack(list(tbl1_row1, tbl1_row2, tbl1_row3, tbl1_row4))%>%
   as_gt()%>%
   cols_width(label ~ pct(40),
              stat_0 ~pct(15))%>%
   tab_options(table.width = pct(55))
 
-gtsave(data = tbl1_stack_summary, filename = 'summarytbl.png', vheight = 1800)
+gtsave(data = Table1, filename = 'summarytbl.png', vheight = 1800)
 
 
 # Figure 2 ----------------------------------------------------------------
-library(lubridate)
-library(ggpubr)
 
-base <- read_dta('AHRI.dta')%>%
-  #create calendar year variable
-  separate(StartDate, into = 'Year', remove = F, sep = '-')
-
-AllMarEdu <- base %>%
-  filter(!is.na(MaritalStatus))%>% 
-  mutate(WasMarried = ifelse(grepl('2|3|4', MaritalStatus), '1', '0'))%>%
-  group_by(IndividualId)%>%
-  mutate(EverMarried = max(WasMarried))%>%
+AllPropEdu <- DataDemMEG %>%
+  #proportion of all indv in gender and education categories
   ungroup()%>%
-  transform(Year = as.numeric(Year))%>%
-  mutate(Age = floor(Year - decimal_date(DoB)))
+  count(Generation, Sex, EduMaxLbl)
 
-AllMarEdu1 <- AllMarEdu %>%
-  mutate(AgeAtObs = decimal_date(EducationObsDate) - decimal_date(DoB))
-
-
-AllMarEdu2  <- AllMarEdu1 %>%
-  group_by(IndividualId)%>%
-  mutate(EduMax = max(Education, na.rm = T))%>%
-  ungroup()
-
-AllMarEdu3 <- AllMarEdu2 %>%
-  group_by(IndividualId)%>%
-  slice_max(EducationObsDate, with_ties = F)
-
-AllMarEdugroup <- AllMarEdu3%>%
-  ungroup()%>%
-  mutate(Edugroupmax = 
-           ifelse(EduMax < 8, 'Primary\nor less',
-                  ifelse(EduMax >=8 & EduMax < 12, 'Some \nsecondary', 
-                         ifelse(EduMax == 12, 'Matric', 'Some \ntertiary')))) %>%
-  mutate( Generation= 
-            ifelse (DoB > '1945-01-01' & DoB < '1965-01-01', 'Gen1', 
-                    ifelse (DoB >= '1965-01-01' & DoB < '1985-01-01','Gen2',
-                            ifelse(DoB > '1985-01-01' & DoB < '1995-01-01','Gen3', 'Other'))))
-
-AllMarEdugroup1 <- AllMarEdugroup%>%
-  filter(AgeAtObs > 23)
-
-
-AllMarEduPropEdu <- AllMarEdugroup1 %>%
-  ungroup()%>%
-  count(Generation, Sex, Edugroupmax)
-
-EverMarEduPropEdu <- AllMarEdugroup1 %>%
+EverMarPropEdu <- DataDemMEG %>%
+  #proportion of indv who are ever married in each gender and education category
   ungroup()%>%
   filter(EverMarried == 1)%>%
-  count(Generation, Sex, Edugroupmax)%>%
+  count(Generation, Sex, EduMaxLbl)%>%
   rename(MarEver = n)
 
-MarEverAggrEdu <- left_join(EverMarEduPropEdu, AllMarEduPropEdu, by =  c('Sex', 'Generation',
-                                                                         'Edugroupmax'))%>%
+Fig2_AggrProps <- left_join(EverMarPropEdu, AllPropEdu, by =  c('Sex', 'Generation',
+                                                                'EduMaxLbl'))%>%
   mutate(MarProp = MarEver/n)
 
-
-GenNames <- c('Gen1' = 'Generation 1945-65',
-              'Gen2' = 'Generation 1965-85' ,
-              'Gen3' = 'Generation 1985-95')
-
-MarEverAggrEdu$Edugroupmax <- factor(MarEverAggrEdu$Edugroupmax, levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
-                                     ordered = T)
+#labels for display
+GenNames <- c('Gen1' = 'Generation 1945-64',
+              'Gen2' = 'Generation 1965-84',
+              'Gen3' = 'Generation 1985-94')
+Fig2_AggrProps$EduMaxLbl <- factor(Fig2_AggrProps$EduMaxLbl, levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
+                                   ordered = T)
 
 
 #Figure 2a
-grd_yminor1 <- seq(0,1, length.out = 11)
-grd_y1 <- seq(0.05,0.95, length.out = 10)
+Fig2_grd_yminor1 <- seq(0,1, length.out = 11)
+fig2_grd_y1 <- seq(0.05,0.95, length.out = 10)
 
-ggEduMarEver <- ggplot(subset(MarEverAggrEdu, Generation != 'Other'))+
-  geom_col(mapping = aes(Edugroupmax, MarProp, fill = factor(Sex)),
+Figure2a <- ggplot(subset(Fig2_AggrProps, Generation != 'Other'))+
+  geom_col(mapping = aes(EduMaxLbl, MarProp, fill = factor(Sex)),
            position = 'dodge')+
   facet_wrap(~Generation, labeller = as_labeller(GenNames))+
   theme(axis.title.y = element_text(margin = margin(r = 10), size = 15, 
@@ -262,30 +247,29 @@ ggEduMarEver <- ggplot(subset(MarEverAggrEdu, Generation != 'Other'))+
   labs( x= '', y = 'Proportion of people who have \never been married')+
   scale_fill_manual(name = '', labels = c('Male', 'Female'),values = c( "#5ab4ac", '#D15439'))+
   scale_y_continuous(breaks = c(0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1), limit = c(0,1))+
-  #geom_hline(yintercept = grd_y1, col = "white", linewidth = 0.5)+
-  geom_hline(yintercept = grd_yminor1, col = "white", linewidth = 0.05)
+  geom_hline(yintercept = Fig2_grd_yminor1, col = "white", linewidth = 0.05)
 
 
-
+#Figure 2b
 
 # relative advantage of edu for marriage 
-MarEverAggrEdu2 <- MarEverAggrEdu %>%
+Fig2_AggrProps2 <- Fig2_AggrProps %>%
   group_by(Generation, Sex)%>%
-  mutate(Ref = MarProp[Edugroupmax == 'Matric'])%>%
+  mutate(Ref = MarProp[EduMaxLbl == 'Matric'])%>%
   ungroup()%>%
   mutate(Adv = MarProp/Ref,
          Adv = Adv - 1)
 
-MarEverAggrEdu2$Edugroupmax <- factor(MarEverAggrEdu2$Edugroupmax, 
-                                      levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
-                                      ordered = T)
+Fig2_AggrProps2$EduMaxLbl <- factor(Fig2_AggrProps2$EduMaxLbl, 
+                                    levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
+                                    ordered = T)
 
 #Figure 2b
-grd_yminor <- seq(-0.75,1.75, length.out = 6)
-grd_y <- seq(-1,2, length.out = 7)
+Fig2_grd_yminor <- seq(-0.75,1.75, length.out = 6)
+Fig2_grd_y <- seq(-1,2, length.out = 7)
 
-ggEduMarEverAdv <- ggplot(subset(subset(MarEverAggrEdu2, Generation != 'Other'), Edugroupmax != 'Matric'))+
-  geom_col(mapping = aes(x = Edugroupmax, y = Adv, fill = factor(Sex)),
+Figure2b <- ggplot(subset(subset(Fig2_AggrProps2, Generation != 'Other'), EduMaxLbl != 'Matric'))+
+  geom_col(mapping = aes(x = EduMaxLbl, y = Adv, fill = factor(Sex)),
            position = 'dodge')+
   facet_wrap(~Generation, labeller = as_labeller(GenNames))+
   theme(axis.title.y = element_text(margin = margin(r = 10), size = 15, 
@@ -303,32 +287,32 @@ ggEduMarEverAdv <- ggplot(subset(subset(MarEverAggrEdu2, Generation != 'Other'),
   scale_fill_manual(name = '', labels = c('Male', 'Female'),values = c( "#5ab4ac", '#D15439'))+
   labs( x= 'Education level', y = 'Difference in likelihood of being ever \nmarried relative to Matric marriage rate')+
   scale_y_continuous(breaks = c(-0.5,0,0.5,1,1.5), limit = c(-0.75,1.75))+
-  geom_hline(yintercept = grd_y, col = "white", linewidth = 0.5) +
-  geom_hline(yintercept = grd_yminor, col = "white", linewidth = 0.5)
+  geom_hline(yintercept = Fig2_grd_y, col = "white", linewidth = 0.5) +
+  geom_hline(yintercept = Fig2_grd_yminor, col = "white", linewidth = 0.5)
 
 
 
 
 #Figure 2 combined
-ggarrange(ggEduMarEver, ggEduMarEverAdv, ncol = 1, labels = c("a)","b)"),
-          font.label = list(size = 20, color = 'grey30'), hjust = 0.075)
+Figure2 <- ggarrange(Figure2a, Figure2b, ncol = 1, labels = c("a)","b)"),
+                     font.label = list(size = 20, color = 'grey30'), hjust = 0.075)
 
 # Figure 3 ----------------------------------------------------------------
 
-Mothers <- AllMarEdugroup1
+Mothers <- DataDemMEG
 
-Daughters <- AllMarEdugroup1 %>%
+Daughters <- DataDemMEG %>%
   filter(DoB >= '1985-01-01' & DoB <= '1995-01-01') %>%
   filter(!is.na(MotherId)) %>%
   select(IndividualId, MotherId, DoB, Sex, Education, EducationObsDate,
          MaritalStatus, EverMarried)
 
 
-MothersDaughters <- left_join(x = Mothers, y= Daughters, 
-                              by = c("IndividualId" = 'MotherId'))
+Fig3_MumDaught <- left_join(x = Mothers, y= Daughters, 
+                            by = c("IndividualId" = 'MotherId'))
 
 
-MothersDaughters <- MothersDaughters %>%
+Fig3_MumDaught <- Fig3_MumDaught %>%
   rename(DoB = DoB.x,
          childDoB = DoB.y,
          Sex = Sex.x,
@@ -340,13 +324,13 @@ MothersDaughters <- MothersDaughters %>%
   group_by(IndividualId)%>%
   mutate(EverMarried.x = max(WasMarried.x)) # creating evermarriage for mothers
 
-MothersDaughtersslice <- MothersDaughters %>%
+Fig3_Sliced <- Fig3_MumDaught %>%
   group_by(IndividualId.y)%>%
   slice(1) %>%
   select(-c(MotherId:LocationId))%>% # selecting only one obs of a daughter-mother pair
-  filter(SexOfChild == 2) # selecitng only women 
+  filter(SexOfChild == 2) # selecting only women 
 
-# Graph for education - 1985 cohort
+# Graph for education - 1985-95 Generation
 
 EduNames <- c("Primary\nor less" = "Primary\nor less",
               "Some \nsecondary" = "Some \nsecondary", 
@@ -354,21 +338,20 @@ EduNames <- c("Primary\nor less" = "Primary\nor less",
               'Some \ntertiary' = 'Some \ntertiary')
 
 
-
-AggrMotherDaugthersMar <- MothersDaughtersslice %>%
+Fig3_aggr_props <- Fig3_Sliced %>%
   ungroup()%>%
-  count(EverMarried.x, EverMarried.y, Edugroupmax)%>%
+  count(EverMarried.x, EverMarried.y, EduMaxLbl)%>%
   mutate( EverMarried.x = ifelse(EverMarried.x == 0, 'Never \nMarried', 'Ever \nMarried'))
 
-AggrMotherDaugthersMar$Edugroupmax <- factor(AggrMotherDaugthersMar$Edugroupmax, 
-                                             levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
-                                             ordered = T)
+Fig3_aggr_props$EduMaxLbl <- factor(Fig3_aggr_props$EduMaxLbl, 
+                                    levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
+                                    ordered = T)
 
 
-Figure3 <- ggplot(subset(AggrMotherDaugthersMar, !is.na(Edugroupmax)))+
+Figure3 <- ggplot(subset(Fig3_aggr_props, !is.na(EduMaxLbl)))+
   geom_col(aes(x = EverMarried.x, y= n, group = EverMarried.y, 
                fill = EverMarried.y), position = 'fill')+
-  facet_wrap(~Edugroupmax, labeller = as_labeller(EduNames), ncol = 4)+
+  facet_wrap(~EduMaxLbl, labeller = as_labeller(EduNames), ncol = 4)+
   scale_y_continuous(breaks = c(0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0))+
   scale_fill_manual(name = "Daughter's marital status", labels = c('Never married', 'Ever married'),
                     values = c('grey75', '#20934A'))+
@@ -394,36 +377,60 @@ ggplot_build(Figure3)
 
 
 # Figure 4 ----------------------------------------------------------------
-library('lubridate')
 
-base1 <- base %>%
-  separate(StartDate, into = 'Year', sep = '-', remove = F)
+#prepare for combining pregnancy and demographic datasets
+DataPreg1 <- DataPreg %>%
+  separate(MotherDoB, into= 'MotherYoB', sep ='-', remove = F)%>%
+  filter( DDate > '1945-01-01') %>%
+  select(WomanId, MotherDoB, MotherYoB, DDate, MotherAge, DeliverySetting,
+         Outcome, LCnt, BirthOrder, FirstRecordedDate) %>%
+  mutate(AgeAtBirth = decimal_date(DDate)-decimal_date(MotherDoB)) %>%
+  filter(MotherAge !=3)%>% #an outlier
+  transform(MotherYoB = as.numeric(MotherYoB))
+
+DataDemMEGSmall <- DataDemMEG %>%
+  ungroup()%>%
+  filter(Sex == 2)%>%
+  select(c(IndividualId, Sex, Education, EduMaxLbl, MaritalStatus,
+           AgeAtEduObs, Generation, EverMarried))
 
 
-preDate <- data.frame(expand.grid(1945: 2000,
-                                  IndividualId = unique(base$IndividualId)))%>%
+#DataPregMEG is DataPreg with marital, education, generation
+DataPregMEG <- left_join(DataPreg1, DataDemMEGSmall, 
+                         by = c('WomanId' = 'IndividualId'))%>%
+  filter(!is.na(Education))
+
+
+#create frame with a row for each year lived by someone in DataDemMEG 
+YearsAlive <- data.frame(expand.grid(1945: 2019,
+                                     IndividualId = unique(DataDemMEG$IndividualId)))%>%
   rename(Year = Var1)
 
-columns <- data.frame(x = colnames(base1), y = NA)%>%
+DataDemY <- DataDem %>%
+  separate(StartDate, into = 'Year', remove = F, sep = '-')%>%
+  select(IndividualId, Year, DoB, DoD, MotherId, Episode, Sex, StartDate)
+
+DataDemY <- DataDemY %>%
+  filter(IndividualId %in% DataDemMEG$IndividualId)
+
+Columns <- data.frame(x = colnames(DataDemY), y = NA)%>%
   pivot_wider(names_from = x, values_from = y)
 
-joinable_rows <- left_join(preDate, columns, by = c('IndividualId', 'Year'))%>%
-  select(c(Node, IndividualId, Sex:StartDate, Year, EndDate:LabourObsDate))
+ColYearsAlive <- left_join(YearsAlive, Columns, by = c('IndividualId', 'Year'))
 
-base2 <- rbind(base1, joinable_rows)
+Fig4_py <- rbind(DataDemY, ColYearsAlive)
 
 
-#done!
-
-base3 <- base2 %>%
-  group_by(IndividualId)%>%
-  fill(DoB,DoD, MotherId, .direction = 'downup')%>%
-  ungroup()%>%
+#fill in created rows
+DataDem3 <- Fig4_py %>%
   transform(Year = as.numeric(Year))%>%
+  group_by(IndividualId)%>%
+  fill(DoB,DoD, .direction = 'downup')%>%
+  ungroup()%>%
   filter(Year >= decimal_date(DoB))%>%
   filter(Year <= decimal_date(DoD) | is.na(DoD))
 
-base5 <- base3 %>%
+DataDem5 <- DataDem3 %>%
   arrange(IndividualId, Year)%>%
   group_by(IndividualId)%>%
   fill(Episode, .direction = 'up')%>%
@@ -431,16 +438,18 @@ base5 <- base3 %>%
   ungroup()%>%
   filter(!is.na(Episode))
 
-base6 <- base5 %>%
+#ensure one row per year, delete duplicates
+DataDem6 <- DataDem5 %>%
   group_by(IndividualId, Year)%>%
-  slice(1)
+  slice(1)%>%
+  ungroup()
 
+rm(Fig4_py)
+rm(DataDem3)
 
-base11 <- base6%>%
-  ungroup()%>%
-  mutate(Age = as.numeric(Year) - decimal_date(DoB))
-
-base12 <- base11%>%
+#create age categories in personyears dataset
+DataDem12 <- DataDem6%>%
+  mutate(Age = Year - decimal_date(DoB))%>%
   mutate(Agegroup = ifelse(Age < 15, 'xu15',
                            ifelse(Age >=15 & Age <20, 'x1519',
                                   ifelse(Age >=20 & Age <25, 'x2024',
@@ -448,69 +457,93 @@ base12 <- base11%>%
                                                 ifelse(Age >=30 & Age <35, 'x3034',
                                                        ifelse(Age >=35 & Age <40, 'x3539',
                                                               ifelse(Age >=40 & Age <45, 'x4044',
-                                                                     ifelse(Age >=45 & Age <50, 'x4549', 'xo50')))))))))%>%
+                                                                     ifelse(Age >=45 & Age <50, 'x4549', 'xo50')))))))))
+#create age categories in births dataset
+PregAgeGrp <- DataPregMEG %>%
+  ungroup()%>%
+  mutate(Agegroup = ifelse(MotherAge < 15, 'xu15B',
+                           ifelse(MotherAge >=15 & MotherAge <20, 'x1519B',
+                                  ifelse(MotherAge >=20 & MotherAge <25, 'x2024B',
+                                         ifelse(MotherAge >=25 & MotherAge <30, 'x2529B',
+                                                ifelse(MotherAge >=30 & MotherAge <35, 'x3034B',
+                                                       ifelse(MotherAge >=35 & MotherAge <40, 'x3539B',
+                                                              ifelse(MotherAge >=40 & MotherAge <45, 'x4044B',
+                                                                     ifelse(MotherAge >=45 & MotherAge <50, 'x4549B', 'xo50B')))))))))
+
+PregAgeGrp <- PregAgeGrp %>%
+  #adding rows for multiple births
+  filter(LCnt ==2 | LCnt ==3)%>%
+  bind_rows(PregAgeGrp)%>%
+  filter(LCnt ==3)%>%
+  bind_rows(PregAgeGrp)%>%
+  #select only livebirths
+  filter(grepl('L|M|F', Outcome))
+
+DataDem13<- DataDem12 %>%
+  arrange(IndividualId, Year)
+
+DataDem15<- DataDem13 %>%
+  ungroup()%>%
+  filter(!grepl('xu15|xo50', Agegroup))%>%
+  ungroup()%>%
   mutate( Generation= 
             ifelse (DoB > '1945-01-01' & DoB < '1965-01-01', 'Gen1', 
                     ifelse (DoB >= '1965-01-01' & DoB < '1985-01-01','Gen2',
-                            ifelse (DoB >= '1985-01-01' & DoB < '1995-01-01','Gen3','Other'))))
-
-base12<- base12 %>%
-  select(-c(EndDate:Memberships))%>%
-  arrange(IndividualId, Year)
-
-base15 <- base12 %>%
-  ungroup()%>%
-  filter(!grepl('xu15|xo50', Agegroup))%>%
+                            ifelse(DoB > '1985-01-01' & DoB < '1995-01-01','Gen3', 'Other'))))%>%
   filter(Generation != 'Other')
 
-base16 <- base15 %>%
+DataDem16 <- DataDem15 %>%
   ungroup()%>%
-  filter(IndividualId %in% pregSEM$WomanId)
+  filter(IndividualId %in% PregAgeGrp$WomanId)
 
-ASpersonyears <- base16%>%
+EvMar <- DataDemMEG %>%
+  select(IndividualId, EverMarried)%>%
+  group_by(IndividualId)%>%
+  slice(1)
+
+ASpersonyears <- DataDem16%>%
   ungroup()%>%
+  left_join(EvMar, by = c('IndividualId' = 'IndividualId'))%>%
   filter(Year < 2018)%>%
   count(Generation, Agegroup)%>%
   pivot_wider(names_from = Agegroup, values_from = n)%>%
   select(-Generation)
 
-
-EvMar <- pregSEM %>%
-  select(WomanId, EverMarried)%>%
-  group_by(WomanId)%>%
-  slice(1)
-
-ASpersonyearsM <- base16%>%
+ASpersonyearsM <- DataDem16%>%
   ungroup()%>%
-  left_join(EvMar, by = c('IndividualId' = 'WomanId'))%>%
+  left_join(EvMar, by = c('IndividualId' = 'IndividualId'))%>%
   filter(Year < 2018,
          EverMarried == 1)%>%
   count(Generation, Agegroup)%>%
   pivot_wider(names_from = Agegroup, values_from = n)%>%
   select(-Generation)
 
-ASpersonyearsNM <- base16%>%
+ASpersonyearsNM <- DataDem16%>%
   ungroup()%>%
-  left_join(EvMar, by = c('IndividualId' = 'WomanId'))%>%
+  left_join(EvMar, by = c('IndividualId' = 'IndividualId'))%>%
   filter(Year < 2018,
          EverMarried == 0)%>%
   count(Generation, Agegroup)%>%
   pivot_wider(names_from = Agegroup, values_from = n)%>%
   select(-Generation)
 
-ASbirthsM <- pregSE2 %>%
+ASbirths <- PregAgeGrp %>%
   filter(!grepl('xu15|xo50', Agegroup))%>%
-  filter(grepl('L|M|F', Outcome))%>%
-  filter(Generation != 'Other', 
-         EverMarried == 1)%>%
+  filter(Generation != 'Other')%>%
   ungroup()%>%
-  filter(EverMarried ==1)%>%
   count(Generation, Agegroup)%>%
   pivot_wider(names_from = Agegroup, values_from = n)
 
-ASbirthsNM <- pregSE2 %>%
+ASbirthsM <- PregAgeGrp %>%
   filter(!grepl('xu15|xo50', Agegroup))%>%
-  filter(grepl('L|M|F', Outcome))%>%
+  filter(Generation != 'Other', 
+         EverMarried == 1)%>%
+  ungroup()%>%
+  count(Generation, Agegroup)%>%
+  pivot_wider(names_from = Agegroup, values_from = n)
+
+ASbirthsNM <- PregAgeGrp %>%
+  filter(!grepl('xu15|xo50', Agegroup))%>%
   filter(Generation != 'Other', 
          EverMarried == 0)%>%
   ungroup()%>%
@@ -572,10 +605,9 @@ ASFRNM[18,4] <- NA
 ASFRNM[14,4] <-NA       #removing age-groups for which less than half women in generation have attained
 
 
-X <- rbind(ASFRNM, ASFRM)
-# WORKS!
+Fig4_ASFRcomb <- rbind(ASFRNM, ASFRM)
 
-ggplot(X)+
+Figure4 <- ggplot(Fig4_ASFRcomb)+
   geom_line(mapping = aes(Agegroup, value, group = interaction(Generation, EverMarried),
                           colour = Generation, 
                           linetype = EverMarried),
@@ -583,11 +615,11 @@ ggplot(X)+
   geom_point(mapping = aes(Agegroup, value, group = Generation, colour = Generation,
                            shape = Generation), 
              size = 5, alpha = 0.9)+
-  scale_color_manual(name = 'Generation', labels = c('1945-65', '1965-85', '1985-95'),
+  scale_color_manual(name = 'Generation', labels = c('1945-64', '1965-84', '1985-94'),
                      values = c('#54438E', "#587DBA", '#20934A'))+
   scale_linetype_manual(name = 'Marital Status', labels = c('Never Married', 'Ever Married'),
                         values = c(3,1))+
-  scale_shape_manual(name = 'Generation', labels = c('1945-65', '1965-85', '1985-95'), 
+  scale_shape_manual(name = 'Generation', labels = c('1945-64', '1965-84', '1985-94'), 
                      values = c(15, 16, 17))+
   theme(axis.title.y = element_text(margin = margin(r = 20), size = 20, 
                                     colour = 'grey30'),
@@ -601,8 +633,8 @@ ggplot(X)+
         legend.key.size = unit(1, 'cm'))+
   labs( x = 'Age group', y = 'Age-specific fertility rate')+
   guides(line = guide_legend(override.aes = list(colour = "grey30") ) )+
-  ylim(0,1.25)
-?scale_shape_manual
+  ylim(0,1.25)+
+  scale_y_continuous(breaks = c(0.0,0.2,0.4,0.6,0.8,1.0,1.2))
 
 
 # Table 2 -----------------------------------------------------------------
@@ -620,7 +652,7 @@ cumsumASFRNM <- ASFRNM %>%
   select(EverMarried, Generation, `15-19`:`45-49`)
 
 
-CumFertTableMar <- ASFRM %>%
+Table2 <- ASFRM %>%
   group_by(Generation)%>%
   mutate(cumsum = cumsum(value))%>%
   select(-c(value, TFR))%>%
@@ -631,8 +663,8 @@ CumFertTableMar <- ASFRM %>%
   mutate(EverMarried = 'Ever Married')%>%
   select(EverMarried, Generation, `15-19`:`45-49`)%>%
   rbind(cumsumASFRNM)%>%
-  mutate(Generation = ifelse(Generation == 'Gen1', '1945-65',
-                             ifelse(Generation == 'Gen2', '1965-85', '1985-95')))%>%
+  mutate(Generation = ifelse(Generation == 'Gen1', '1945-64',
+                             ifelse(Generation == 'Gen2', '1965-84', '1985-94')))%>%
   group_by(Generation)%>%
   gt()%>%
   tab_header('Cumulative TFR')%>%
@@ -642,7 +674,7 @@ CumFertTableMar <- ASFRM %>%
   tab_style(locations = cells_title(groups = "title"),
             style     = list(cell_text(weight = "bold", size = 24)  ) )%>%
   cols_align(align = 'left', columns = Generation)%>%
-  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP cohort")%>%
+  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP data")%>%
   tab_spanner(label = 'Age group', columns = `15-19`:`45-49`  )%>%
   sub_missing(
     columns = everything(),
@@ -656,85 +688,47 @@ CumFertTableMar <- ASFRM %>%
   tab_style(style = cell_text(color = 'white'),
             locations = cells_column_labels(EverMarried))
 
-gtsave(filename = 'cumfertmar.png', data = CumFertTableMar, vheight = 1200)
+gtsave(filename = 'Table2.png', data = CumFertTableMar, vheight = 1200)
 
 # Figure 5 ----------------------------------------------------------------
 
 
 
-pregEdu <- preg %>%
-  separate(MotherDoB, into= 'MotherYoB', sep ='-', remove = F)%>%
-  filter( DDate > '1945-01-01') %>%
-  select(WomanId, MotherDoB, MotherYoB, DDate, MotherAge, DeliverySetting,
-         Outcome, LCnt, BirthOrder, FirstRecordedDate) %>%
-  mutate(AgeAtBirth = decimal_date(DDate)-decimal_date(MotherDoB)) %>%
-  filter(MotherAge !=3)%>% #an outlier
-  transform(MotherYoB = as.numeric(MotherYoB))
-
-baseSmall <- base %>%
-  mutate(Age = decimal_date(StartDate) - decimal_date(DoB),
-         AgeAtEduObs = decimal_date(EducationObsDate) - decimal_date(DoB))%>%
-  filter(Sex == 2)%>%
-  group_by(IndividualId)%>%
-  mutate(EduMax = max(Education, na.rm = T))%>%
-  ungroup()
-
-mutate(Edugroupmax = 
-         ifelse(EduMax < 8, 'Primary\nor less',
-                ifelse(EduMax >=8 & EduMax < 12, 'Some \nsecondary', 
-                       ifelse(EduMax == 12, 'Matric', 'Some \ntertiary'))))%>%
-  mutate( Generation= 
-            ifelse (DoB > '1945-01-01' & DoB < '1965-01-01', 'Gen1', 
-                    ifelse (DoB >= '1965-01-01' & DoB < '1985-01-01','Gen2',
-                            ifelse(DoB > '1985-01-01' & DoB < '1995-01-01',
-                                   'Gen3', 'Other'))))%>%
-  select(c(Age, IndividualId, Sex, Education, Edugroupmax, MaritalStatus,
-           AgeAtEduObs, Generation))%>%
-  group_by(IndividualId)%>%
-  mutate(MaxAgeAtObs = max(AgeAtEduObs, na.rm = T))
-#dataset with generations, max education, marital and one observation 
-#per individual
-baseSmallSlice <- baseSmall %>%
-  group_by(IndividualId)%>%
-  slice(1)
-
-
-#pregSEM is pregnancy with socieconomic variables
-pregSEM <- left_join(pregEdu, baseSmallSlice, 
-                     by = c('WomanId' = 'IndividualId'))
-
-
-
-
-AgeFirstBirthDotPlot <- subset(pregSEM, Generation != 'Other') %>%
+#calculate summary statistics for age at first birth
+Fig5_data <- subset(DataPregMEG, Generation != 'Other') %>%
   filter(BirthOrder == 1,
          AgeAtBirth < 25 & AgeAtBirth >= 12,
-         !is.na(Edugroupmax))%>%
-  filter(AgeAtEduObs > 20)%>%
-  group_by(Edugroupmax, Generation)%>%
+         !is.na(EduMaxLbl))%>%
+  group_by(EduMaxLbl, Generation)%>%
   summarise(Median = format(round(median(AgeAtBirth, na.rm = T), 2), nsmall = 2),
             Q1 = format(round(quantile(probs = 0.25, AgeAtBirth),2), nsmall = 2),
             Q3 = format(round(quantile( probs = 0.75, AgeAtBirth),2), nsmall = 2),
             Mean = format(round(mean(AgeAtBirth, na.rm = T),2), nsmall = 2),
             s.d. = format(round(sd(AgeAtBirth, na.rm = T),2), nsmall = 2),
             n = n())%>%
+  mutate(a = ' (',
+         b = ')')%>%
+  unite(IQR, c(a,Q1), sep = "", remove = T)%>%
+  unite(IQR, c(IQR,Q3), sep = ", ", remove = T)%>%
+  unite(IQR, c(IQR, b), sep = "", remove = T)%>%
   mutate(Generation = factor(Generation, levels = c('Gen1', 'Gen2', 'Gen3'),
-                             labels = c('1945-65', '1965-85', '1985-95')))
+                             labels = c('1945-64', '1965-84', '1985-94')))
 
-
-AgeFirstBirthDotPlot$Edugroupmax <- factor(AgeFirstBirthDotPlot$Edugroupmax, levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
-                                           ordered = T)
+#create education labels and set levels
+Fig5_data$EduMaxLbl <- factor(Fig5_data$EduMaxLbl, levels = c('Primary\nor less', 'Some \nsecondary', 'Matric', 'Some \ntertiary'),
+                              ordered = T)
 EduNames2 <- c('Primary\nor less' = 'Primary or less',
                'Some \nsecondary' = 'Some secondary',
                'Matric' = 'Matric',
                'Some \ntertiary' = 'Some tertiary')
-#in diss
-ggplot(AgeFirstBirthDotPlot)+
+
+#build Figure 5
+Figure5 <- ggplot(Fig5_data)+
   geom_segment(aes(y = Generation, yend = Generation, 
                    x = as.numeric(Q1), xend= as.numeric(Q3)), lwd = 2, colour = 'grey40', alpha = 0.9)+
   geom_point(aes(x = as.numeric(Median), y = Generation, colour = Generation), size = 9, alpha = 0.9)+
-  facet_wrap(~Edugroupmax, ncol = 1, labeller = as_labeller(EduNames2))+
-  scale_color_manual(name = 'Generation', labels = c('1945-65', '1965-85', '1985-95'),
+  facet_wrap(~EduMaxLbl, ncol = 1, labeller = as_labeller(EduNames2))+
+  scale_color_manual(name = 'Generation', labels = c('1945-64', '1965-84', '1985-94'),
                      values = c('#54438E', '#587DBA', '#20934A'))+
   theme(strip.background = element_rect('transparent'),
         legend.position = 'none',
@@ -755,88 +749,35 @@ ggplot(AgeFirstBirthDotPlot)+
   scale_y_discrete(limits=rev)
 
 #ANOVA proof of significance
-AllMarEduAOV <- subset(pregSEM, Generation != 'Other') %>%
+DataDemMEG_AOV <- subset(DataPregMEG, Generation != 'Other') %>%
   filter(BirthOrder == 1,
          AgeAtBirth < 25 & AgeAtBirth >= 12,
-         !is.na(Edugroupmax))%>%
+         !is.na(EduMaxLbl))%>%
   filter(AgeAtEduObs > 20)
 
-AllMarEduAOV1 <- AllMarEduAOV%>%
-  filter(Edugroupmax == 'Primary\nor less')
-AllMarEduAOV2 <- AllMarEduAOV%>%
-  filter(Edugroupmax == 'Some \nsecondary')
-AllMarEduAOVM <- AllMarEduAOV%>%
-  filter(Edugroupmax == 'Matric')
-AllMarEduAOV3 <- AllMarEduAOV%>%
-  filter(Edugroupmax == 'Some \ntertiary')
+DataDemMEG_AOV1 <- DataDemMEG_AOV%>%
+  filter(EduMaxLbl == 'Primary\nor less')
+DataDemMEG_AOV2 <- DataDemMEG_AOV%>%
+  filter(EduMaxLbl == 'Some \nsecondary')
+DataDemMEG_AOVM <- DataDemMEG_AOV%>%
+  filter(EduMaxLbl == 'Matric')
+DataDemMEG_AOV3 <- DataDemMEG_AOV%>%
+  filter(EduMaxLbl == 'Some \ntertiary')
 
-Edu1AOV <- summary(aov(AgeAtBirth ~ Generation, data = AllMarEduAOV1))
-Edu2AOV <- summary(aov(AgeAtBirth ~ Generation, data = AllMarEduAOV2))
-MatricAOV <- summary(aov(AgeAtBirth ~ Generation, data = AllMarEduAOVM))
-Edu3AOV <- summary(aov(AgeAtBirth ~ Generation, data = AllMarEduAOV3))
+Edu1AOV <- summary(aov(AgeAtBirth ~ Generation, data = DataDemMEG_AOV1))
+Edu2AOV <- summary(aov(AgeAtBirth ~ Generation, data = DataDemMEG_AOV2))
+MatricAOV <- summary(aov(AgeAtBirth ~ Generation, data = DataDemMEG_AOVM))
+Edu3AOV <- summary(aov(AgeAtBirth ~ Generation, data = DataDemMEG_AOV3))
 
-GenAOV <- summary(aov(AgeAtBirth ~ Generation, data = AllMarEduAOV))
-EduAOV <- summary(aov(AgeAtBirth ~ Edugroupmax, data = AllMarEduAOV))
+GenAOV <- summary(aov(AgeAtBirth ~ Generation, data = DataDemMEG_AOV))
+EduAOV <- summary(aov(AgeAtBirth ~ EduMaxLbl, data = DataDemMEG_AOV))
 
 
 # Figure 6 ----------------------------------------------------------------
 
 
-#downloading datasets
-load('base') #SocioDem dataset
-load('preg') #Pregnancies 2019 dataset
-load('wgh') #Women's General Health dataset
-
-
-load('pregSEM') #Pregnancies 2019 dataset
-preg <- pregSEM 
-wgh <- read_dta('wgh.dta')#Women's General Health dataset
-base <- read_dta('AHRI.dta') #SocioDem dataset
-
-#combining education markers from base with pregnancy dataset
-pregEdu <- preg %>%
-  separate(MotherDoB, into= 'MotherYoB', sep ='-', remove = F)%>%
-  filter( DDate > '1945-01-01') %>%
-  select(WomanId, MotherDoB, MotherYoB, DDate, MotherAge, DeliverySetting, Outcome, LCnt, BirthOrder, FirstRecordedDate) %>%
-  mutate(AgeAtBirth = decimal_date(DDate)-decimal_date(MotherDoB)) %>%
-  filter(MotherAge !=3)%>% #an outlier
-  transform(MotherYoB = as.numeric(MotherYoB))
-
-baseSmall <- base %>%
-  mutate(Age = decimal_date(StartDate) - decimal_date(DoB),
-         AgeAtEduObs = decimal_date(EducationObsDate) - decimal_date(DoB))%>%
-  filter(Sex == 2)%>%
-  group_by(IndividualId)%>%
-  mutate(EduMax = max(Education, na.rm = T))%>%
-  ungroup()%>%
-  mutate(Edugroupmax = 
-           ifelse(EduMax < 8, 'Primary\nor less',
-                  ifelse(EduMax >=8 & EduMax < 12, 'Some \nsecondary', 
-                         ifelse(EduMax == 12, 'Matric', 'Some \ntertiary')))) %>%
-  mutate( Generation= 
-            ifelse (DoB > '1945-01-01' & DoB < '1965-01-01', 'Gen1', 
-                    ifelse (DoB >= '1965-01-01' & DoB < '1985-01-01','Gen2',
-                            ifelse(DoB > '1985-01-01' & DoB < '1995-01-01','Gen3', 'Other'))))%>%
-  select(c(Age, IndividualId, Sex, Education, Edugroupmax, MaritalStatus, AgeAtEduObs, Generation))%>%
-  group_by(IndividualId)%>%
-  mutate(MaxAgeAtObs = max(AgeAtEduObs, na.rm = T))
-
-#dataset with generations, max education, marital and one observation 
-#per individual
-baseSmallSlice <- baseSmall %>%
-  group_by(IndividualId)%>%
-  slice(1)
-
-
-#pregSEM is pregnancy with socieconomic variables
-pregSEM <- left_join(pregEdu, baseSmallSlice, 
-                     by = c('WomanId' = 'IndividualId'))
-
-
-#Building figure 6
-
 #Union1 computes the oldest age at which an individual was single
-Union1 <- base %>%
+Union1 <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01',
          MaritalStatus == 1)%>%
@@ -844,13 +785,14 @@ Union1 <- base %>%
   mutate(AgeAtSingle = decimal_date(EndDate) - decimal_date(DoB))%>%
   group_by(IndividualId)%>%
   slice_max(AgeAtSingle, with_ties = F)%>%
+  ungroup()%>%
   pivot_wider(values_from = EndDate, names_from = MaritalStatus)%>%
   select(IndividualId, DoB, AgeAtSingle, `1` )%>%
   rename(SingleDate = `1` )
 
 # Union5 computes the minimum age at which an individual entered marriage or an
 # informal union
-Union5 <- base %>%
+Union5 <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01',
          MaritalStatus == 5 | MaritalStatus == 2)%>%
@@ -865,7 +807,7 @@ Union5 <- base %>%
 
 #NotUnion1 retains people who were never in a union and were observed after age 18
 # nd assigns their age at union 'NA'
-NotUnion <- base %>%
+NotUnion <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01')%>%
   select(IndividualId, DoB, StartDate, EndDate, MaritalStatus)%>%
@@ -873,7 +815,8 @@ NotUnion <- base %>%
   filter(AgeAtUnion <25)%>% #so only those in unions before 25
   group_by(IndividualId)%>%
   mutate(MaritalMax = max(MaritalStatus, na.rm =T),
-         AgeMax = max(AgeAtUnion, na.rm= T))
+         AgeMax = max(AgeAtUnion, na.rm= T))%>%
+  ungroup()
 
 NotUnion1 <- NotUnion %>%
   filter(MaritalMax == 1, 
@@ -882,18 +825,19 @@ NotUnion1 <- NotUnion %>%
   slice_max(AgeAtUnion, with_ties = F)%>%
   filter(!is.na(MaritalStatus))%>%
   mutate(AgeAtUnion = NA)%>%
-  select(IndividualId, AgeAtUnion)
+  select(IndividualId, AgeAtUnion)%>%
+  mutate(UnionDaTe = NA)
 
 #union gives the age and date for which a person first entered a union after
-# being observed being single, and maintians those who never entered a union
+# being observed being single, and maintains those who never entered a union
 Union <- left_join(Union1, Union5, by = c('IndividualId'))%>%
   mutate(gap = decimal_date(UnionDate) - decimal_date(SingleDate))%>%
   filter(gap < 2| AgeAtSingle > AgeAtUnion)%>%
-  select(IndividualId, AgeAtUnion, UnionDate)%>%
-  rbind(NotUnion1)
+  select(IndividualId, AgeAtUnion, UnionDate)
+rbind(NotUnion1)
 
 #Education12 selects the youngest age associated with being in grade 12
-Education12 <- base %>%
+Education12 <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01')%>%
   select(IndividualId, DoB, StartDate, EndDate, Education, EducationObsDate)%>%
@@ -904,7 +848,7 @@ Education12 <- base %>%
 
 #Education 11 selects the youngest age associated with being in 
 #grade 10 or grade 11
-Education11 <- base %>%
+Education11 <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01')%>%
   select(IndividualId, DoB, StartDate, EndDate, Education, EducationObsDate)%>%
@@ -919,7 +863,7 @@ Education11 <- Education11%>%
 
 #EducationNot1 retains those who were aged over 18 at last observation but
 # never reached grade 12 and assigns them 'NA' for 'DateMatric' variable
-EducationNot <- base %>%
+EducationNot <- DataDem %>%
   filter(Sex ==2,
          DoB >'1985-01-01' & DoB <'1995-01-01')%>%
   select(IndividualId, DoB, StartDate, EndDate, Education, EducationObsDate)%>%
@@ -955,15 +899,15 @@ Education <- rbind(Education12, Education11)%>%
   bind_rows(EducationNot1)
 
 #FirstBirth  selects the age at first birth available for all women in
-#the 1985-95 generation
-FirstBirth <- pregSEM %>%
+#the 1985-94 generation
+FirstBirth <- DataPregMEG %>%
   filter(MotherDoB > '1985-01-01' & MotherDoB <'1995-01-01',
          BirthOrder ==1)%>%
   select(WomanId, DDate, AgeAtBirth)
 
 #FirstSex selects the minimum age at which an individual reports first having
 #had sex
-FirstSex <- wgh %>%
+FirstSex <- DataWGH %>%
   select(IIntId, DSRound, AgeAtFirstSex, AgeAtVisit)%>%
   filter(!is.na(AgeAtFirstSex),
          AgeAtFirstSex <25 & AgeAtFirstSex >11)%>%
@@ -971,12 +915,12 @@ FirstSex <- wgh %>%
   slice_min(AgeAtFirstSex, with_ties = F)%>%
   select(IIntId, AgeAtFirstSex)
 
-#edugroupmax selects the maximum education an individual is observed as having 
+#EduMaxLbl selects the maximum education an individual is observed as having 
 #over all survye rounds
-Edugroupmax <- base %>%
+EduMaxLbl <- DataDem %>%
   select(IndividualId, Education)%>%
   group_by(IndividualId)%>%
-  mutate(Edugroupmax = max(Education, na.rm=T))%>%
+  mutate(EduMaxLbl = max(Education, na.rm=T))%>%
   slice(1)
 
 #LifeEvents joins an individual's date at reaching grade 12, having sex, and
@@ -989,9 +933,9 @@ LifeEvents <- FirstBirth %>%
          AgeMatric < 25 | is.na(AgeMatric),
          AgeAtUnion < 25 | is.na(AgeAtUnion),
          AgeAtFirstSex < AgeAtBirth)%>% #first sex cannot occur after first birth
-  left_join(Edugroupmax,  by = c('WomanId' = 'IndividualId'))
+  left_join(EduMaxLbl,  by = c('WomanId' = 'IndividualId'))
 
-unique(LifeEvents$WomanId)
+
 
 
 # Figure 6 
@@ -1024,11 +968,11 @@ LifeEventsCount <-LifeEvents %>%
 
 
 #plot the variaion in life event by age at sexual debut
-Figure6 <- ggplot(LifeEventsCount, aes(x = AgeAtFirstSex, y = AgeAtEvent, 
-                                       group = EventType))+
-  geom_point(aes(colour= EventType), lwd = 1.5)+
-  geom_point(aes( ymin = AgeAtEvent - sd, ymax = AgeAtEvent + sd,
-                  fill = EventType), alpha = 0.3)+
+Figure6a <- ggplot(LifeEventsCount, aes(x = AgeAtFirstSex, y = AgeAtEvent, 
+                                        group = EventType))+
+  geom_line(aes(colour= EventType), lwd = 1.5)+
+  geom_ribbon(aes( ymin = AgeAtEvent - sd, ymax = AgeAtEvent + sd,
+                   fill = EventType), alpha = 0.3)+
   scale_colour_manual(name = '', labels = c('First birth',
                                             'Achieves matric',
                                             'First union'),
@@ -1054,22 +998,41 @@ Figure6 <- ggplot(LifeEventsCount, aes(x = AgeAtFirstSex, y = AgeAtEvent,
   scale_y_continuous(breaks = 15:25)
 
 
+Figure6b <-  ggplot(LifeEventsCount)+
+  geom_smooth(aes(x = AgeAtFirstSex, y = perc), colour =  '#5ab4ac', lwd = 2,
+              se = F, span = 0.5)+
+  scale_x_continuous(breaks = 14:25)+
+  labs(x = 'Age when woman first had sex', y = 'Frequency (%)')+
+  theme(axis.title.y = element_text(margin = margin(r=20), size = 15, 
+                                    colour = 'grey30'),
+        axis.title.x = element_text(margin = margin(t = 20), size = 20, 
+                                    colour = 'grey30'),
+        axis.text = element_text(colour = 'grey30', size = 15),
+        plot.margin = unit(c(0,1,0,1.2), 'cm'))+
+  scale_y_continuous(breaks = c(0,10, 20), limits = c(0,25))
+
+Figure6 <- ggarrange(Figure6a, Figure6b, ncol = 1, labels = c("a)","b)"),
+                     font.label = list(size = 23, color = 'grey30'), hjust = -0.5, 
+                     heights = c(1, 0.25))
+
+
+
 # App3 Table 1 ------------------------------------------------------------
 
-AllMarPropT <- AllMarEdugroup1 %>%
+AllMarPropT <- DataDemMEG %>%
   ungroup()%>%
   count(Generation, Sex)
 
-EverMarPropT <- AllMarEdugroup1 %>%
+EverMarPropT <- DataDemMEG %>%
   ungroup()%>%
   filter(EverMarried == 1)%>%
   count(Generation, Sex)%>%
   rename(MarEver = n)
 
-CurMarT<- AllMarEdu2 %>%
+CurMarT<- DataDem %>%
   ungroup()%>%
-  filter(MaritalStatus == 2)%>%
-  filter(Age > 23)%>%
+  filter(MaritalStatus == 2,
+         IndividualId %in% DataDemMEG$IndividualId)%>%
   filter(StartDate > '2018-01-01' & StartDate <'2019-01-01')%>%
   group_by(IndividualId)%>%
   slice(1)%>%
@@ -1081,10 +1044,10 @@ CurMarT<- AllMarEdu2 %>%
   count(Generation, Sex)%>%
   rename(CurMar = n)
 
-CurMarAllT<- AllMarEdu2 %>%
+CurMarAllT<- DataDem %>%
   ungroup()%>%
-  filter(StartDate > '2018-01-01' & StartDate <'2019-01-01')%>%
-  filter(Age > 23)%>%
+  filter(StartDate > '2018-01-01' & StartDate <'2019-01-01',
+         IndividualId %in% DataDemMEG$IndividualId)%>%
   group_by(IndividualId)%>%
   slice(1)%>%
   ungroup()%>%
@@ -1094,8 +1057,9 @@ CurMarAllT<- AllMarEdu2 %>%
                             ifelse(DoB > '1985-01-01' & DoB < '1995-01-01','Gen3', 'Other'))))%>%
   count(Generation, Sex)%>%
   rename(CurMarN = n)
-#in diss
-MarEverAggrEduT <- left_join(EverMarPropT, AllMarPropT, by =  c('Sex', 'Generation'))%>%
+
+
+Fig2_TableApp <- left_join(EverMarPropT, AllMarPropT, by =  c('Sex', 'Generation'))%>%
   left_join(CurMarT, by = c('Sex', 'Generation'))%>%
   left_join(CurMarAllT, by = c('Sex', 'Generation'))%>%
   mutate(MarProp = MarEver*100/n,
@@ -1105,12 +1069,12 @@ MarEverAggrEduT <- left_join(EverMarPropT, AllMarPropT, by =  c('Sex', 'Generati
   transform(Sex = ifelse(Sex == 1, 'Male', 'Female'))%>%
   mutate_if(is.numeric, round, 2)%>%
   gt()%>%
-  tab_header('Marriage rates in the AHRI PIP cohort')%>%
-  tab_row_group(label = 'cohort 1945-65', 
+  tab_header('Marriage rates in the AHRI PIP data')%>%
+  tab_row_group(label = 'Generation 1945-64', 
                 rows = Generation == 'Gen1') %>%
-  tab_row_group(label = 'cohort 1965-85', 
+  tab_row_group(label = 'Generation 1965-84', 
                 rows = Generation == 'Gen2') %>%
-  tab_row_group(label = 'cohort 1985-95', 
+  tab_row_group(label = 'Generation 1985-94', 
                 rows = Generation == 'Gen3')%>%
   tab_style(locations = cells_column_labels(columns = everything()),
             style = list( cell_borders(sides = "bottom", weight = px(3)),
@@ -1137,37 +1101,28 @@ MarEverAggrEduT <- left_join(EverMarPropT, AllMarPropT, by =  c('Sex', 'Generati
   cols_width(
     Sex ~ pct(30))%>%
   tab_options(table.width = pct(40))%>%
-  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP cohort 2000-2019")%>%
-  row_group_order(groups = c("cohort 1945-65", "cohort 1965-85", "cohort 1985-95"))
+  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP data 2000-2019")%>%
+  row_group_order(groups = c("Generation 1945-64", "Generation 1965-84", "Generation 1985-94"))
 
 
-gtsave(filename = 'MarriageRateTable.png', data = MarEverAggrEduT, vwidth = 800)
+gtsave(filename = 'MarriageRateTable.png', data = Fig2_TableApp, vwidth = 800)
 
-?gtsave
-library(gt)
-library(tidyverse)
-coldata <- ggplot_build(ggEduMarEver)
-
-avgAgeGraph <- AllMarEdu1group%>%
-  group_by(Generation, Edugroup, Sex)%>%
-  summarise(Age = median(Age))%>%
-  print(n=30)
 
 # App4 Table 1 ------------------------------------------------------------
 
 
 
-birthagesEduTable <- AgeFirstBirth%>%
+Appendix4 <- Fig5_data%>%
   gt()%>%
   tab_header('Age at first birth among under 25 year-olds')%>%
   tab_row_group(label = 'Primary or less  ***', 
-                rows = Edugroupmax == 'Primary\nor less') %>%
+                rows = EduMaxLbl == 'Primary\nor less') %>%
   tab_row_group(label = 'Some secondary  ***', 
-                rows = Edugroupmax == 'Some \nsecondary') %>%
-  tab_row_group(label = 'Matric  ***', 
-                rows = Edugroupmax == 'Matric')%>%
+                rows = EduMaxLbl == 'Some \nsecondary') %>%
+  tab_row_group(label = 'Matric  *', 
+                rows = EduMaxLbl == 'Matric')%>%
   tab_row_group(label = 'Some tertiary  **', 
-                rows = Edugroupmax == 'Some \ntertiary')%>%
+                rows = EduMaxLbl == 'Some \ntertiary')%>%
   tab_style(locations = cells_column_labels(columns = everything()),
             style = list( cell_borders(sides = "bottom", weight = px(3)),
                           cell_text(weight = "bold")))%>%
@@ -1180,43 +1135,34 @@ birthagesEduTable <- AgeFirstBirth%>%
               cell_fill(color = "grey90"),
               cell_text(style = "italic") ))%>%
   tab_source_note(source_note = "One-way ANOVA: ***p <0.001, **p <0.01, *p <0.05")%>%
-  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP cohort")%>%
-  row_group_order(groups = c('Some tertiary  **','Matric  ***', 'Some secondary  ***',
+  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP data")%>%
+  row_group_order(groups = c('Some tertiary  **','Matric  *', 'Some secondary  ***',
                              'Primary or less  ***'))
 
 
-gtsave(filename = 'AgeFirstBirth.png', data = birthagesEduTable, vwidth = 1200, vheight = 3200)
+gtsave(filename = 'AgeFirstBirth.png', data = Appendix4, vwidth = 1200, vheight = 3200)
 
-library(gt)
-library(webshot)
-library(tidyverse)
 
 
 
 # App5 Table 1 ------------------------------------------------------------
 
 
-library(gt)
-library(webshot2)
-library(tidyverse)
-
-baseDOB <- base %>%
-  select(IndividualId, DoB)%>%
-  mutate(Generation = ifelse(DoB >= '1945-01-01' & DoB < '1965-01-01', '1945-65',
-                             ifelse(DoB >='1965-01-01' & DoB < '1985-01-01', '1965-85', 
-                                    ifelse(DoB >='1985-01-01' & DoB < '1995-01-01', '1985-95', 'Other'))))%>%
-  select(-DoB)
-
+DataDemDOB <- DataDemMEG %>%
+  select(IndividualId, Generation)
 
 
 FirstSexTable1 <- FirstSex %>%
-  left_join(baseDOB, by = c('IIntId' = 'IndividualId'))%>%
+  left_join(DataDemDOB, by = c('IIntId' = 'IndividualId'))%>%
   group_by(IIntId)%>%
   slice(1)
 
 FirstSexTable2 <- FirstSexTable1 %>%
+  ungroup()%>%
   filter(Generation != 'Other', 
          !is.na(Generation))%>%
+  mutate(Generation = factor(Generation, levels = c('Gen1', 'Gen2', 'Gen3'),
+                             labels = c('1945-64', '1965-84', '1985-94')))%>%
   group_by(Generation)%>%
   summarise(Mean = mean(AgeAtFirstSex, na.rm = T),
             s.d. = sd(AgeAtFirstSex, na.rm = T),
@@ -1230,7 +1176,7 @@ FirstSexTable2 <- FirstSexTable1 %>%
   tab_style(locations = cells_title(groups = "title"),
             style     = list(cell_text(weight = "bold", size = 24)  ) )%>%
   cols_align(align = 'left', columns = Generation)%>%
-  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP cohort")%>%
+  tab_source_note(source_note = "Data: Author's calculations from AHRI PIP data")%>%
   tab_style(locations = cells_row_groups(groups = everything()),
             style = list(
               cell_fill(color = "grey90"),
